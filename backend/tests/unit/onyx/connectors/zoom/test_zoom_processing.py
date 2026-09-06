@@ -10,7 +10,6 @@ from onyx.connectors.exceptions import (
 from onyx.connectors.models import ConnectorFailure, Document
 from onyx.connectors.zoom.client import ZoomClient
 from onyx.connectors.zoom.models import ZoomSessionDetails, ZoomTranscript
-from onyx.connectors.zoom.recordings.access import AccessResolver, NoAccessResolver
 from onyx.connectors.zoom.recordings.models import OccurrenceWork, ZoomSessionType
 from onyx.connectors.zoom.recordings.processing import (
     process_occurrence,
@@ -57,11 +56,11 @@ def _client_with_transcript() -> MagicMock:
 def _run(
     client: MagicMock,
     work: OccurrenceWork,
-    access_resolver: AccessResolver | None = None,
+    include_access: bool = False,
 ) -> list[Document | ConnectorFailure]:
-    """Defaults to the no-op resolver: these tests are about transcripts, and
-    access lists have their own file."""
-    return list(process_occurrence(client, work, access_resolver or NoAccessResolver()))
+    """Leaves the access list off by default: these tests are about transcripts,
+    and access lists have their own file."""
+    return list(process_occurrence(client, work, include_access=include_access))
 
 
 class TestZoomDocumentId:
@@ -75,7 +74,6 @@ class TestZoomDocumentId:
 
         assert meeting == "ZOOM_MEETING_abc=="
         assert webinar == "ZOOM_WEBINAR_abc=="
-        # Same occurrence uuid must not collide across types.
         assert meeting != webinar
 
 
