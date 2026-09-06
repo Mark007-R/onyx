@@ -10,6 +10,7 @@ from onyx.connectors.exceptions import (
 from onyx.connectors.models import ConnectorFailure, Document
 from onyx.connectors.zoom.client import ZoomClient
 from onyx.connectors.zoom.models import ZoomSessionDetails, ZoomTranscript
+from onyx.connectors.zoom.recordings.access import AccessResolver, NoAccessResolver
 from onyx.connectors.zoom.recordings.models import OccurrenceWork, ZoomSessionType
 from onyx.connectors.zoom.recordings.processing import (
     process_occurrence,
@@ -53,8 +54,14 @@ def _client_with_transcript() -> MagicMock:
     return client
 
 
-def _run(client: MagicMock, work: OccurrenceWork) -> list[Document | ConnectorFailure]:
-    return list(process_occurrence(client, work))
+def _run(
+    client: MagicMock,
+    work: OccurrenceWork,
+    access_resolver: AccessResolver | None = None,
+) -> list[Document | ConnectorFailure]:
+    """Defaults to the no-op resolver: these tests are about transcripts, and
+    access lists have their own file."""
+    return list(process_occurrence(client, work, access_resolver or NoAccessResolver()))
 
 
 class TestZoomDocumentId:
