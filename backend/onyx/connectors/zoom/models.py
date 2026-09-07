@@ -31,9 +31,16 @@ class ZoomSessionDetails(BaseModel):
     from `GET /webinars/{webinarId}`, which return much more than this."""
 
     uuid: str | None = None
+    # Zoom sends the session number as an integer here and as a string
+    # everywhere else, so narrowing this to str rejects real responses.
+    id: int | str | None = None
     topic: str | None = None
     start_time: str | None = None
     duration: int | None = None
+
+    @property
+    def session_id(self) -> str | None:
+        return str(self.id) if self.id is not None else None
 
 
 class ZoomSessionOccurrence(BaseModel):
