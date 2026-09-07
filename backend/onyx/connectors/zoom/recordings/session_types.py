@@ -8,6 +8,7 @@ import abc
 from onyx.connectors.zoom.client import ZoomClient
 from onyx.connectors.zoom.models import ZoomSessionDetails, ZoomSessionOccurrence
 from onyx.connectors.zoom.recordings.access import (
+    AccessList,
     AccessSource,
     approved_registrant_emails,
     union_source_emails,
@@ -61,9 +62,9 @@ class SessionTypeHandler(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def fetch_access_list(self, client: ZoomClient, work: OccurrenceWork) -> set[str]:
-        """An empty set means no source could name anybody, which the caller
-        turns into document-set and group access rather than an empty ACL."""
+    def fetch_access_list(self, client: ZoomClient, work: OccurrenceWork) -> AccessList:
+        """An empty emails set means nobody could be named, which the caller
+        turns into a document failure."""
         raise NotImplementedError
 
 
@@ -80,7 +81,7 @@ class MeetingSessionType(SessionTypeHandler):
     ) -> ZoomSessionDetails | None:
         return client.get_past_meeting_details(occurrence_uuid)
 
-    def fetch_access_list(self, client: ZoomClient, work: OccurrenceWork) -> set[str]:
+    def fetch_access_list(self, client: ZoomClient, work: OccurrenceWork) -> AccessList:
         """Only participants are per-occurrence. Registrants and invitees hang
         off the scheduled meeting, so on a recurring series they grant access to
         every run, which is accepted: being invited to a series counts as access
@@ -126,7 +127,7 @@ class WebinarSessionType(SessionTypeHandler):
     ) -> ZoomSessionDetails | None:
         return client.get_webinar_details(occurrence_uuid)
 
-    def fetch_access_list(self, client: ZoomClient, work: OccurrenceWork) -> set[str]:
+    def fetch_access_list(self, client: ZoomClient, work: OccurrenceWork) -> AccessList:
         """A webinar has no invitee list to read. Zoom records only who
         registered, who presented and who attended.
         """
