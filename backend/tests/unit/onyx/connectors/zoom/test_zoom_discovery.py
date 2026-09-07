@@ -9,7 +9,6 @@ from onyx.connectors.exceptions import (
     CredentialExpiredError,
     InsufficientPermissionsError,
 )
-from onyx.connectors.zoom.client import ZoomClient
 from onyx.connectors.zoom.models import (
     ZoomRecordingEntry,
     ZoomRecordingPage,
@@ -26,6 +25,10 @@ from onyx.connectors.zoom.recordings.discovery import (
     build_discovery_sources,
 )
 from onyx.connectors.zoom.recordings.models import ZoomSessionType
+from tests.unit.onyx.connectors.zoom.helpers import (
+    mock_zoom_client,
+    recording_entry,
+)
 
 # Fixed rather than time.time(): a float from the clock can carry more
 # precision than datetime keeps, so round-tripping it through a datetime
@@ -45,7 +48,7 @@ def _occurrence_at(uuid: str, epoch_seconds: float) -> ZoomSessionOccurrence:
 def _client_with_occurrences(
     occurrences: list[ZoomSessionOccurrence],
 ) -> MagicMock:
-    client = MagicMock(spec=ZoomClient)
+    client = mock_zoom_client()
     client.list_past_meeting_occurrences.return_value = occurrences
     return client
 
@@ -53,7 +56,7 @@ def _client_with_occurrences(
 class TestIdAllowlistSource:
     def test_one_id_expanded_per_step_with_cursor_progression(self) -> None:
         source = IdAllowlistSource(["111", "222"])
-        client = MagicMock(spec=ZoomClient)
+        client = mock_zoom_client()
         client.list_past_meeting_occurrences.side_effect = lambda session_id: [
             ZoomSessionOccurrence(uuid=f"uuid-{session_id}")
         ]
@@ -103,7 +106,7 @@ class TestIdAllowlistSource:
 
     def test_listing_failure_reports_entity_failure_and_still_advances(self) -> None:
         source = IdAllowlistSource(["111", "222"])
-        client = MagicMock(spec=ZoomClient)
+        client = mock_zoom_client()
         client.list_past_meeting_occurrences.side_effect = RuntimeError("boom")
 
         result = source.discover_step(client, _START, _END, None)
@@ -126,7 +129,7 @@ class TestIdAllowlistSource:
 
     def test_cursor_past_end_is_done(self) -> None:
         source = IdAllowlistSource(["111"])
-        client = MagicMock(spec=ZoomClient)
+        client = mock_zoom_client()
 
         result = source.discover_step(client, _START, _END, {"index": 5})
 
@@ -299,7 +302,7 @@ class TestIdAllowlistPaging:
 
     def test_new_occurrence_mid_paging_does_not_skip_earlier_ones(self) -> None:
         source = IdAllowlistSource(["111"])
-        client = MagicMock(spec=ZoomClient)
+        client = mock_zoom_client()
         base = [
             ZoomSessionOccurrence(
                 uuid=f"uuid-{i:04d}", start_time=f"2026-01-01T00:{i:02d}:00Z"
@@ -414,7 +417,7 @@ class TestDiscoverySystemicFailures:
 
     def test_rate_limit_stops_discovery_instead_of_skipping_the_session(self) -> None:
         source = IdAllowlistSource(["111", "222"])
-        client = MagicMock(spec=ZoomClient)
+        client = mock_zoom_client()
         response = requests.Response()
         response.status_code = 429
         client.list_past_meeting_occurrences.side_effect = requests.HTTPError(
@@ -426,7 +429,7 @@ class TestDiscoverySystemicFailures:
 
     def test_expired_credentials_stop_discovery(self) -> None:
         source = IdAllowlistSource(["111", "222"])
-        client = MagicMock(spec=ZoomClient)
+        client = mock_zoom_client()
         client.list_past_meeting_occurrences.side_effect = CredentialExpiredError(
             "token expired"
         )
@@ -438,7 +441,7 @@ class TestDiscoverySystemicFailures:
         # The occurrence listing ends in response.json(), so a truncated body
         # surfaces as this rather than as an HTTP error.
         source = IdAllowlistSource(["111", "222"])
-        client = MagicMock(spec=ZoomClient)
+        client = mock_zoom_client()
         client.list_past_meeting_occurrences.side_effect = (
             requests.exceptions.JSONDecodeError("truncated", "{", 1)
         )
@@ -451,7 +454,7 @@ class TestIdAllowlistWebinars:
     def _client_with_webinar_occurrences(
         self, occurrences: list[ZoomSessionOccurrence]
     ) -> MagicMock:
-        client = MagicMock(spec=ZoomClient)
+        client = mock_zoom_client()
         client.list_past_webinar_occurrences.return_value = occurrences
         return client
 
@@ -472,7 +475,7 @@ class TestIdAllowlistWebinars:
 
     def test_meetings_run_before_webinars_in_one_cursor_walk(self) -> None:
         source = IdAllowlistSource(["111"], ["222"])
-        client = MagicMock(spec=ZoomClient)
+        client = mock_zoom_client()
         client.list_past_meeting_occurrences.return_value = [
             ZoomSessionOccurrence(uuid="m-1", start_time="2026-01-15T10:00:00Z")
         ]
@@ -493,7 +496,7 @@ class TestIdAllowlistWebinars:
 
     def test_failure_names_the_webinar_rather_than_the_bare_id(self) -> None:
         source = IdAllowlistSource([], ["111"])
-        client = MagicMock(spec=ZoomClient)
+        client = mock_zoom_client()
         client.list_past_webinar_occurrences.side_effect = RuntimeError("boom")
 
         result = source.discover_step(client, _START, _END, None)
@@ -507,7 +510,7 @@ class TestIdAllowlistWebinars:
         # Without the add-on every webinar call fails, so skipping this one
         # silently skips them all and still reports success.
         source = IdAllowlistSource([], ["222", "333"])
-        client = MagicMock(spec=ZoomClient)
+        client = mock_zoom_client()
         client.list_past_webinar_occurrences.side_effect = InsufficientPermissionsError(
             "no add-on"
         )
@@ -516,28 +519,12 @@ class TestIdAllowlistWebinars:
             source.discover_step(client, _START, _END, None)
 
 
-def _recording(
-    uuid: str,
-    session_id: int | str = 6840331990,
-    topic: str | None = "Weekly Sync",
-    start_time: str | None = "2026-01-15T10:00:00Z",
-    recording_type: str = "2",
-) -> ZoomRecordingEntry:
-    return ZoomRecordingEntry(
-        uuid=uuid,
-        id=session_id,
-        topic=topic,
-        start_time=start_time,
-        type=recording_type,
-    )
-
-
 def _client_for_hosts(
     users: list[ZoomUser] | None = None,
     members: list[ZoomUser] | None = None,
     recordings: list[ZoomRecordingEntry] | None = None,
 ) -> MagicMock:
-    client = MagicMock(spec=ZoomClient)
+    client = mock_zoom_client()
     client.list_users.return_value = ZoomUserPage(users=users or [])
     client.list_group_members.return_value = ZoomUserPage(users=members or [])
     client.list_user_recordings.return_value = ZoomRecordingPage(
@@ -556,7 +543,7 @@ class TestHostAllowlistSource:
                 ZoomUser(id="other", email="someone@example.com"),
                 ZoomUser(id="u1", email="host@example.com"),
             ],
-            recordings=[_recording("uuid-1")],
+            recordings=[recording_entry("uuid-1")],
         )
 
         result = source.discover_step(client, _START, _END, None)
@@ -569,7 +556,7 @@ class TestHostAllowlistSource:
         source = HostAllowlistSource(["host@example.com"])
         client = _client_for_hosts(
             users=[ZoomUser(id="u1", email="host@example.com")],
-            recordings=[_recording("uuid-1")],
+            recordings=[recording_entry("uuid-1")],
         )
 
         work = source.discover_step(client, _START, _END, None).work[0]
@@ -584,7 +571,7 @@ class TestHostAllowlistSource:
         source = HostAllowlistSource(["  Host@Example.com "])
         client = _client_for_hosts(
             users=[ZoomUser(id="u1", email="host@example.com")],
-            recordings=[_recording("uuid-1")],
+            recordings=[recording_entry("uuid-1")],
         )
 
         result = source.discover_step(client, _START, _END, None)
@@ -616,7 +603,7 @@ class TestHostAllowlistSource:
 
     def test_user_paging_stops_as_soon_as_every_email_is_found(self) -> None:
         source = HostAllowlistSource(["host@example.com"])
-        client = _client_for_hosts(recordings=[_recording("uuid-1")])
+        client = _client_for_hosts(recordings=[recording_entry("uuid-1")])
         client.list_users.side_effect = [
             ZoomUserPage(
                 users=[ZoomUser(id="u1", email="host@example.com")],
@@ -631,7 +618,7 @@ class TestHostAllowlistSource:
 
     def test_user_paging_continues_until_an_email_is_found(self) -> None:
         source = HostAllowlistSource(["host@example.com"])
-        client = _client_for_hosts(recordings=[_recording("uuid-1")])
+        client = _client_for_hosts(recordings=[recording_entry("uuid-1")])
         client.list_users.side_effect = [
             ZoomUserPage(
                 users=[ZoomUser(id="u2", email="another@example.com")],
@@ -652,7 +639,7 @@ class TestHostAllowlistSource:
                 ZoomUser(id="u1", email="a@example.com"),
                 ZoomUser(id="u2", email="b@example.com"),
             ],
-            recordings=[_recording("uuid-1")],
+            recordings=[recording_entry("uuid-1")],
         )
 
         first = source.discover_step(client, _START, _END, None)
@@ -664,7 +651,7 @@ class TestHostAllowlistSource:
         source = HostAllowlistSource(["typo@example.com", "host@example.com"])
         client = _client_for_hosts(
             users=[ZoomUser(id="u1", email="host@example.com")],
-            recordings=[_recording("uuid-1")],
+            recordings=[recording_entry("uuid-1")],
         )
 
         first = source.discover_step(client, _START, _END, None)
@@ -684,7 +671,7 @@ class TestGroupSource:
             ]
         )
         client.list_user_recordings.side_effect = lambda user_id, **_: (
-            ZoomRecordingPage(recordings=[_recording(f"uuid-{user_id}")])
+            ZoomRecordingPage(recordings=[recording_entry(f"uuid-{user_id}")])
         )
 
         first = source.discover_step(client, _START, _END, None)
@@ -700,7 +687,7 @@ class TestGroupSource:
         source = GroupSource("group-1")
         client = _client_for_hosts(
             members=[ZoomUser(id="u2"), ZoomUser(id="u1")],
-            recordings=[_recording("uuid-1")],
+            recordings=[recording_entry("uuid-1")],
         )
 
         source.discover_step(client, _START, _END, None)
@@ -709,7 +696,7 @@ class TestGroupSource:
 
     def test_member_paging_collects_every_page(self) -> None:
         source = GroupSource("group-1")
-        client = _client_for_hosts(recordings=[_recording("uuid-1")])
+        client = _client_for_hosts(recordings=[recording_entry("uuid-1")])
         client.list_group_members.side_effect = [
             ZoomUserPage(users=[ZoomUser(id="u1")], next_page_token="tok"),
             ZoomUserPage(users=[ZoomUser(id="u2")]),
@@ -735,7 +722,7 @@ class TestGroupSource:
         source = GroupSource("group-1")
         client = _client_for_hosts(
             members=[ZoomUser(email="pending@example.com"), ZoomUser(id="u1")],
-            recordings=[_recording("uuid-1")],
+            recordings=[recording_entry("uuid-1")],
         )
 
         result = source.discover_step(client, _START, _END, None)
@@ -760,8 +747,10 @@ class TestUserRecordingsPaging:
         source = GroupSource("group-1")
         client = _client_for_hosts(members=[ZoomUser(id="u1")])
         client.list_user_recordings.side_effect = [
-            ZoomRecordingPage(recordings=[_recording("uuid-1")], next_page_token="tok"),
-            ZoomRecordingPage(recordings=[_recording("uuid-2")]),
+            ZoomRecordingPage(
+                recordings=[recording_entry("uuid-1")], next_page_token="tok"
+            ),
+            ZoomRecordingPage(recordings=[recording_entry("uuid-2")]),
         ]
 
         result = source.discover_step(client, _START, _END, None)
@@ -777,7 +766,7 @@ class TestUserRecordingsPaging:
         client = _client_for_hosts(
             members=[ZoomUser(id="u1")],
             recordings=[
-                _recording(
+                recording_entry(
                     f"uuid-{i:04d}", start_time=f"2026-01-01T00:{i % 60:02d}:00Z"
                 )
                 for i in range(total)
@@ -801,7 +790,7 @@ class TestUserRecordingsPaging:
         client = _client_for_hosts(
             members=[ZoomUser(id="u1")],
             recordings=[
-                _recording(
+                recording_entry(
                     f"uuid-{i:04d}", start_time=f"2026-01-01T00:{i % 60:02d}:00Z"
                 )
                 for i in range(_MAX_WORK_PER_STEP + 5)
@@ -815,7 +804,9 @@ class TestUserRecordingsPaging:
 
     def test_a_late_transcript_for_an_old_meeting_costs_nothing(self) -> None:
         batch = [
-            _recording(f"uuid-{i:04d}", start_time=f"2026-01-02T00:{i % 60:02d}:00Z")
+            recording_entry(
+                f"uuid-{i:04d}", start_time=f"2026-01-02T00:{i % 60:02d}:00Z"
+            )
             for i in range(_MAX_WORK_PER_STEP + 5)
         ]
         first = GroupSource("group-1").discover_step(
@@ -829,7 +820,7 @@ class TestUserRecordingsPaging:
             _client_for_hosts(
                 members=[ZoomUser(id="u1")],
                 recordings=[
-                    _recording("uuid-late", start_time="2026-01-01T09:00:00Z"),
+                    recording_entry("uuid-late", start_time="2026-01-01T09:00:00Z"),
                     *batch,
                 ],
             ),
@@ -846,7 +837,9 @@ class TestUserRecordingsPaging:
         # Two sources, because only a resumed attempt lists again. With one, the
         # cache would serve the first listing and the sort would go untested.
         batch = [
-            _recording(f"uuid-{i:04d}", start_time=f"2026-01-01T00:{i % 60:02d}:00Z")
+            recording_entry(
+                f"uuid-{i:04d}", start_time=f"2026-01-01T00:{i % 60:02d}:00Z"
+            )
             for i in range(_MAX_WORK_PER_STEP + 5)
         ]
         first_client = _client_for_hosts(members=[ZoomUser(id="u1")], recordings=batch)
@@ -855,7 +848,7 @@ class TestUserRecordingsPaging:
         resumed_client = _client_for_hosts(
             members=[ZoomUser(id="u1")],
             recordings=[
-                _recording("uuid-9999", start_time="2026-06-01T00:00:00Z"),
+                recording_entry("uuid-9999", start_time="2026-06-01T00:00:00Z"),
                 *reversed(batch),
             ],
         )
@@ -870,7 +863,7 @@ class TestUserRecordingsPaging:
     def test_an_unrecognised_cursor_restarts_rather_than_skipping_a_host(self) -> None:
         source = GroupSource("group-1")
         client = _client_for_hosts(
-            members=[ZoomUser(id="u1")], recordings=[_recording("uuid-1")]
+            members=[ZoomUser(id="u1")], recordings=[recording_entry("uuid-1")]
         )
 
         result = source.discover_step(client, _START, _END, {"bogus": "value"})
@@ -897,7 +890,7 @@ class TestHostListChangesBetweenAttempts:
     ) -> tuple[list[str], MagicMock]:
         client = _client_for_hosts(members=members)
         client.list_user_recordings.side_effect = lambda user_id, **_: (
-            ZoomRecordingPage(recordings=[_recording(f"rec-{user_id}")])
+            ZoomRecordingPage(recordings=[recording_entry(f"rec-{user_id}")])
         )
         source = GroupSource("group-1")
         seen: list[str] = []
@@ -930,7 +923,7 @@ class TestHostListChangesBetweenAttempts:
     def test_the_named_host_vanishing_starts_the_next_one_cleanly(self) -> None:
         source = GroupSource("group-1")
         client = _client_for_hosts(
-            members=[ZoomUser(id="c")], recordings=[_recording("rec-c")]
+            members=[ZoomUser(id="c")], recordings=[recording_entry("rec-c")]
         )
 
         result = source.discover_step(
@@ -971,7 +964,7 @@ class TestUserRecordingsPollWindow:
         source = GroupSource("group-1")
         client = _client_for_hosts(
             members=[ZoomUser(id="u1")],
-            recordings=[_recording("uuid-1", start_time="1999-01-01T10:00:00Z")],
+            recordings=[recording_entry("uuid-1", start_time="1999-01-01T10:00:00Z")],
         )
 
         result = source.discover_step(client, time.time() - 60, time.time(), None)
@@ -984,7 +977,7 @@ class TestUserRecordingsSessionTypes:
         source = GroupSource("group-1")
         client = _client_for_hosts(
             members=[ZoomUser(id="u1")],
-            recordings=[_recording("uuid-1", recording_type="5")],
+            recordings=[recording_entry("uuid-1", recording_type="5")],
         )
 
         work = source.discover_step(client, _START, _END, None).work[0]
@@ -996,8 +989,8 @@ class TestUserRecordingsSessionTypes:
         client = _client_for_hosts(
             members=[ZoomUser(id="u1")],
             recordings=[
-                _recording("uuid-upload", recording_type="99"),
-                _recording("uuid-meeting"),
+                recording_entry("uuid-upload", recording_type="99"),
+                recording_entry("uuid-meeting"),
             ],
         )
 
@@ -1012,8 +1005,8 @@ class TestUserRecordingsSessionTypes:
         client = _client_for_hosts(
             members=[ZoomUser(id="u1")],
             recordings=[
-                _recording("uuid-new-kind", recording_type="42"),
-                _recording("uuid-meeting"),
+                recording_entry("uuid-new-kind", recording_type="42"),
+                recording_entry("uuid-meeting"),
             ],
         )
 
@@ -1050,7 +1043,7 @@ class TestUserRecordingsFailures:
         def _recordings(user_id: str, **_: object) -> ZoomRecordingPage:
             if user_id == "u1":
                 raise RuntimeError("boom")
-            return ZoomRecordingPage(recordings=[_recording("uuid-2")])
+            return ZoomRecordingPage(recordings=[recording_entry("uuid-2")])
 
         client.list_user_recordings.side_effect = _recordings
 
